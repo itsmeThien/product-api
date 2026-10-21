@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # Service 1: MongoDB Database
+  # ==========================================
+  mongodb:
+    image: mongo:latest
+    container_name: nammongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=product_db
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - product-network
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --eval 'db.adminCommand(\"ping\")' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ==========================================
+  # Service 2: Product RESTful API
+  # ==========================================
+  product-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: product-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongodb:27017/product_db
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - product-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+# ==========================================
+# Persistent Volumes & Custom Network
+# ==========================================
+volumes:
+  mongodb_data:
+    name: nammongodb_data
+
+networks:
+  product-network:
+    name: product-network
+    driver: bridge

@@ -1,0 +1,44 @@
+name: Test Product CI (Simple)
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  test-simple-ci:
+    name: Run Simple CI Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check project files
+        run: |
+          echo "=== Checking project structure ==="
+          ls -la
+          node -v
+          npm -v
+
+      - name: Syntax & Lint validation check
+        run: |
+          echo "Validating syntax of JavaScript files..."
+          node --check src/server.js
+          node --check src/app.js
+          node --check src/config/db.js
+          node --check src/models/product.model.js
+          node --check src/controllers/product.controller.js
+          node --check src/routes/product.routes.js
+          echo "All source files passed syntax check successfully!"

@@ -1,0 +1,114 @@
+name: Continuous Deployment (CD) to Docker Hub
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # ====================================================
+  # GIAI ĐOẠN 1: CI & HEALTHCHECK TRƯỚC KHI DEPLOY
+  # ====================================================
+  ci-healthcheck:
+    name: CI Verification & Healthcheck
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run CRUD Integration Tests
+        env:
+          PORT: 5000
+          NODE_ENV: test
+          MONGODB_URI: mongodb://localhost:27017/product_db_test
+        run: npm test
+
+      - name: Verify Live Healthcheck Endpoint
+        env:
+          PORT: 5000
+          NODE_ENV: production
+          MONGODB_URI: mongodb://localhost:27017/product_db
+        run: |
+          node src/server.js &
+          API_PID=$!
+          sleep 5
+          HEALTH_STATUS=$(curl -s http://localhost:5000/health | jq -r .status)
+          echo "Healthcheck response status: $HEALTH_STATUS"
+          kill $API_PID
+          if [ "$HEALTH_STATUS" != "UP" ]; then
+            echo "Healthcheck failed! Status is not UP."
+            exit 1
+          fi
+
+  # ====================================================
+  # GIAI ĐOẠN 2: BUILD & PUSH IMAGE LÊN DOCKER HUB
+  # ====================================================
+  cd-dockerhub-push:
+    name: Build & Push Docker Image to Docker Hub
+    needs: ci-healthcheck
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (Multi-platform support)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata (Tags & Labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/product-api
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+            type=ref,event=branch
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: CD Summary
+        run: |
+          echo "================================================="
+          echo "✅ CD pipeline completed successfully!"
+          echo "Image pushed to Docker Hub: ${{ secrets.DOCKERHUB_USERNAME }}/product-api:latest"
+          echo "================================================="
